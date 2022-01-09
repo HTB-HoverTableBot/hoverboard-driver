@@ -1,6 +1,6 @@
 #pragma once
 
-#define PORT "/dev/ttyUSB0"
+#define DEFAULT_PORT "/dev/ttyUSB0"
 
 #define ENCODER_MIN 0
 #define ENCODER_MAX 9000
