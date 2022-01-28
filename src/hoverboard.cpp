@@ -44,7 +44,15 @@ Hoverboard::Hoverboard() {
     std::size_t error = 0;
     error += !rosparam_shortcuts::get("hoverboard_driver", nh, "hoverboard_velocity_controller/wheel_radius", wheel_radius);
     error += !rosparam_shortcuts::get("hoverboard_driver", nh, "hoverboard_velocity_controller/linear/x/max_velocity", max_velocity);
+    error += !rosparam_shortcuts::get("hoverboard_driver", nh, "robaka/direction", direction_correction);
     rosparam_shortcuts::shutdownIfError("hoverboard_driver", error);
+
+    if (!rosparam_shortcuts::get("hoverboard_driver", nh, "port", port)) {
+        port = DEFAULT_PORT;
+        ROS_WARN("Port is not set in config, using default %s", port.c_str());
+    } else {
+        ROS_INFO("Using port %s", port.c_str());
+    }
 
     // Convert m/s to rad/s
     max_velocity /= wheel_radius;
@@ -62,7 +70,7 @@ Hoverboard::Hoverboard() {
     pids[1].init(nh_right, 1.0, 0.0, 0.0, 0.01, 1.5, -1.5, true, max_velocity, -max_velocity);
     pids[1].setOutputLimits(-max_velocity, max_velocity);
 
-    if ((port_fd = open(PORT, O_RDWR | O_NOCTTY | O_NDELAY)) < 0) {
+    if ((port_fd = open(port.c_str(), O_RDWR | O_NOCTTY | O_NDELAY)) < 0) {
         ROS_FATAL("Cannot open serial port to hoverboard");
         exit(-1);
     }
@@ -96,12 +104,12 @@ void Hoverboard::read() {
 	        last_read = ros::Time::now();
 
         if (r < 0 && errno != EAGAIN)
-            ROS_ERROR("Reading from serial %s failed: %d", PORT, r);
+            ROS_ERROR("Reading from serial %s failed: %d", port.c_str(), r);
     }
 
     if ((ros::Time::now() - last_read).toSec() > 1) {
-        ROS_FATAL("Timeout reading from serial %s failed", PORT);
-        
+        ROS_FATAL("Timeout reading from serial %s failed", port.c_str());
+
         //publish false when not receiving serial data
         std_msgs::Bool b;
         b.data = false;
@@ -152,8 +160,8 @@ void Hoverboard::protocol_recv (char byte) {
             temp_pub.publish(f);
 
             // Convert RPM to RAD/S
-            joints[0].vel.data = DIRECTION_CORRECTION * (abs(msg.speedL_meas) * 0.10472);
-            joints[1].vel.data = DIRECTION_CORRECTION * (abs(msg.speedR_meas) * 0.10472);
+            joints[0].vel.data = direction_correction * (abs(msg.speedL_meas) * 0.10472);
+            joints[1].vel.data = direction_correction * (abs(msg.speedR_meas) * 0.10472);
             vel_pub[0].publish(joints[0].vel);
             vel_pub[1].publish(joints[1].vel);
 
@@ -220,12 +228,40 @@ void Hoverboard::on_encoder_update (int16_t right, int16_t left) {
     posL = left + multL*(ENCODER_MAX-ENCODER_MIN);
     last_wheelcountL = left;
 
-    // Convert position in ticks to position in radians
-    joints[0].pos.data = 2.0*M_PI * posL/(double)TICKS_PER_ROTATION;
-    joints[1].pos.data = 2.0*M_PI * posR/(double)TICKS_PER_ROTATION;
+    // When the board shuts down and restarts, wheel ticks are reset to zero so the robot can be suddently lost
+    // This section accumulates ticks even if board shuts down and is restarted   
+    static double lastPosL = 0.0, lastPosR = 0.0;
+    static double lastPubPosL = 0.0, lastPubPosR = 0.0;
+    static bool nodeStartFlag = true;
+    
+    //IF there has been a pause in receiving data AND the new number of ticks is close to zero, indicates a board restard
+    //(the board seems to often report 1-3 ticks on startup instead of zero)
+    //reset the last read ticks to the startup values
+    if((ros::Time::now() - last_read).toSec() > 0.2
+		&& abs(posL) < 5 && abs(posR) < 5){
+            lastPosL = posL;
+            lastPosR = posR;
+	}
+    double posLDiff = 0;
+    double posRDiff = 0;
+
+    //if node is just starting keep odom at zeros
+	if(nodeStartFlag){
+		nodeStartFlag = false;
+	}else{
+            posLDiff = posL - lastPosL;
+            posRDiff = posR - lastPosR;
+	}
+
+    lastPubPosL += posLDiff;
+    lastPubPosR += posRDiff;
+    lastPosL = posL;
+    lastPosR = posR;
+    
+    // Convert position in accumulated ticks to position in radians
+    joints[0].pos.data = 2.0*M_PI * lastPubPosL/(double)TICKS_PER_ROTATION;
+    joints[1].pos.data = 2.0*M_PI * lastPubPosR/(double)TICKS_PER_ROTATION;
+
     pos_pub[0].publish(joints[0].pos);
     pos_pub[1].publish(joints[1].pos);
-//    printf("POS: %d %d %.2f %.2f\n", right, left,
-//     	   joints[1].pos.data,
-//     	   joints[0].pos.data);
 }
