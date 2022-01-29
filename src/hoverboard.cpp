@@ -45,6 +45,7 @@ Hoverboard::Hoverboard() {
     error += !rosparam_shortcuts::get("hoverboard_driver", nh, "hoverboard_velocity_controller/wheel_radius", wheel_radius);
     error += !rosparam_shortcuts::get("hoverboard_driver", nh, "hoverboard_velocity_controller/linear/x/max_velocity", max_velocity);
     error += !rosparam_shortcuts::get("hoverboard_driver", nh, "robaka/direction", direction_correction);
+    error += !rosparam_shortcuts::get("hoverboard_driver", nh, "robaka/inverted", inverted);
     ROS_INFO("Direction correction set to %d", direction_correction);
     rosparam_shortcuts::shutdownIfError("hoverboard_driver", error);
 
@@ -196,8 +197,14 @@ void Hoverboard::write(const ros::Time& time, const ros::Duration& period) {
     };
 
     // Calculate steering from difference of left and right
-    const double speed = (set_speed[0] + set_speed[1])/2.0;
-    const double steer = (set_speed[0] - speed)*2.0;
+    double speed = (set_speed[0] + set_speed[1])/2.0;
+    double steer = (set_speed[0] - speed)*2.0;
+
+    if (inverted == 1){
+      speed = -speed;
+      steer = -steer;
+    }
+
 
     SerialCommand command;
     command.start = (uint16_t)START_FRAME;

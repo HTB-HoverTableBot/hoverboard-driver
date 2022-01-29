@@ -49,6 +49,7 @@ public:
     double wheel_radius;
     double max_velocity = 0.0;
     int direction_correction = 1;
+    int inverted = 1;
     std::string port;
 
     ros::Time last_read;
