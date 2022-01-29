@@ -45,6 +45,7 @@ Hoverboard::Hoverboard() {
     error += !rosparam_shortcuts::get("hoverboard_driver", nh, "hoverboard_velocity_controller/wheel_radius", wheel_radius);
     error += !rosparam_shortcuts::get("hoverboard_driver", nh, "hoverboard_velocity_controller/linear/x/max_velocity", max_velocity);
     error += !rosparam_shortcuts::get("hoverboard_driver", nh, "robaka/direction", direction_correction);
+    ROS_INFO("Direction correction set to %d", direction_correction);
     rosparam_shortcuts::shutdownIfError("hoverboard_driver", error);
 
     if (!rosparam_shortcuts::get("hoverboard_driver", nh, "port", port)) {
