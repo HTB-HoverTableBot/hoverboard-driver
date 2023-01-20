@@ -8,6 +8,28 @@
 #include <rosparam_shortcuts/rosparam_shortcuts.h>
 
 Hoverboard::Hoverboard() {
+  hardware_interface::JointStateHandle left_wheel_state_handle("left_wheel",
+      &joints[0].pos.data,
+      &joints[0].vel.data,
+      &joints[0].eff.data);
+  hardware_interface::JointStateHandle right_wheel_state_handle("right_wheel",
+      &joints[1].pos.data,
+      &joints[1].vel.data,
+      &joints[1].eff.data);
+  joint_state_interface.registerHandle (left_wheel_state_handle);
+  joint_state_interface.registerHandle (right_wheel_state_handle);
+  registerInterface(&joint_state_interface);
+
+  hardware_interface::JointHandle left_wheel_vel_handle(
+      joint_state_interface.getHandle("left_wheel"),
+      &joints[0].cmd.data);
+  hardware_interface::JointHandle right_wheel_vel_handle(
+      joint_state_interface.getHandle("right_wheel"),
+      &joints[1].cmd.data);
+  velocity_joint_interface.registerHandle (left_wheel_vel_handle);
+  velocity_joint_interface.registerHandle (right_wheel_vel_handle);
+  registerInterface(&velocity_joint_interface);
+
   // These publishers are only for debugging purposes
   vel_pub[0]    = nh.advertise<std_msgs::Float64>("hoverboard/left_wheel/velocity", 3);
   vel_pub[1]    = nh.advertise<std_msgs::Float64>("hoverboard/right_wheel/velocity", 3);
@@ -21,35 +43,11 @@ Hoverboard::Hoverboard() {
 
   std::size_t error = 0;
   error += !rosparam_shortcuts::get("hoverboard_driver", nh, "hoverboard_velocity_controller/wheel_radius", wheel_radius);
-  error += !rosparam_shortcuts::get("hoverboard_driver", nh, "hoverboard_velocity_controller/wheel_separation", wheel_separation);
   error += !rosparam_shortcuts::get("hoverboard_driver", nh, "hoverboard_velocity_controller/linear/x/max_velocity", max_velocity);
   error += !rosparam_shortcuts::get("hoverboard_driver", nh, "robaka/direction", direction_correction);
+  error += !rosparam_shortcuts::get("hoverboard_driver", nh, "robaka/inverted", inverted);
   ROS_INFO("Direction correction set to %d", direction_correction);
   rosparam_shortcuts::shutdownIfError("hoverboard_driver", error);
-
-  hardware_interface::JointStateHandle left_wheel_state_handle("left_wheel",
-      &joints[0].pos.data,
-      &joints[0].vel.data,
-      &joints[0].eff.data);
-  hardware_interface::JointStateHandle right_wheel_state_handle("right_wheel",
-      &joints[1].pos.data,
-      &joints[1].vel.data,
-      &joints[1].eff.data);
-  joint_state_interface.registerHandle (left_wheel_state_handle);
-  joint_state_interface.registerHandle (right_wheel_state_handle);
-
-  hardware_interface::JointHandle left_wheel_vel_handle(
-      joint_state_interface.getHandle("left_wheel"),
-      &joints[0].cmd.data);
-  hardware_interface::JointHandle right_wheel_vel_handle(
-      joint_state_interface.getHandle("right_wheel"),
-      &joints[1].cmd.data);
-
-  velocity_joint_interface.registerHandle (left_wheel_vel_handle);
-  velocity_joint_interface.registerHandle (right_wheel_vel_handle);
-
-  registerInterface(&joint_state_interface);
-  registerInterface(&velocity_joint_interface);
 
   if (!rosparam_shortcuts::get("hoverboard_driver", nh, "port", port)) {
     port = DEFAULT_PORT;
@@ -164,13 +162,13 @@ void Hoverboard::protocol_recv (char byte) {
       temp_pub.publish(f);
 
       // Convert RPM to RAD/S
-      joints[0].vel.data = msg.speedL_meas * 0.10472;
-      joints[1].vel.data = msg.speedR_meas * 0.10472;
+      joints[0].vel.data = direction_correction * (abs(msg.speedL_meas) * 0.10472);
+      joints[1].vel.data = direction_correction * (abs(msg.speedR_meas) * 0.10472);
       vel_pub[0].publish(joints[0].vel);
       vel_pub[1].publish(joints[1].vel);
 
       // Process encoder values and update odometry
-      on_encoder_update(msg.wheelR_cnt, msg.wheelL_cnt);
+      on_encoder_update (msg.wheelR_cnt, msg.wheelL_cnt);
     } else {
       ROS_WARN("Hoverboard checksum mismatch: %d vs %d", msg.checksum, checksum);
     }
@@ -189,8 +187,8 @@ void Hoverboard::write(const ros::Time& time, const ros::Duration& period) {
   cmd_pub[1].publish(joints[1].cmd);
 
   double pid_outputs[2];
-    pid_outputs[0] = pids[0](joints[0].vel.data, joints[1].cmd.data, period);
-    pid_outputs[1] = pids[1](joints[1].vel.data, joints[0].cmd.data, period);
+  pid_outputs[0] = pids[0](joints[0].vel.data, joints[0].cmd.data, period);
+  pid_outputs[1] = pids[1](joints[1].vel.data, joints[1].cmd.data, period);
 
   // Convert PID outputs in RAD/S to RPM
   double set_speed[2] = {
@@ -199,11 +197,14 @@ void Hoverboard::write(const ros::Time& time, const ros::Duration& period) {
   };
 
   // Calculate steering from difference of left and right
-  double speed = (pid_outputs[0] + pid_outputs[1])/(2.0*0.10472);
-  double steer = (pid_outputs[1] - pid_outputs[0])/(wheel_separation*0.10472);
+  double speed = (set_speed[0] + set_speed[1])/2.0;
+  double steer = (set_speed[0] - speed)*2.0;
 
-  if (direction_correction)
+  if (inverted == 1){
     speed = -speed;
+    steer = -steer;
+  }
+
 
   SerialCommand command;
   command.start = (uint16_t)START_FRAME;
