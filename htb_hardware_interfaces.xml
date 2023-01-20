@@ -1,0 +1,9 @@
+<library path="htb_hardware_interfaces">
+  <class name="htb_hardware_interfaces/HtbSystem"
+         type="htb_hardware_interfaces::HtbSystem"
+         base_class_type="hardware_interface::SystemInterface">
+    <description>
+      Hardware system controller for Htb
+    </description>
+  </class>
+</library>
