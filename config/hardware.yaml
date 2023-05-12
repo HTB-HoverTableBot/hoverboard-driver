@@ -1,6 +1,6 @@
 robaka:
   direction: 1
-  inverted: 1
+  inverted: 0
   hardware_interface:
      loop_hz: 50 # hz
      joints:
