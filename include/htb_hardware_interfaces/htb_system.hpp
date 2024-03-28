@@ -19,6 +19,9 @@
 #include "sensor_msgs/msg/joint_state.hpp"
 
 #include "htb_hardware_interfaces/wheel.hpp"
+#include "hoverboard_driver/protocol.hpp"
+#include "hoverboard_driver/pid.hpp"
+#include "hoverboard_driver/config.hpp"
 
 namespace htb_hardware_interfaces
 {
@@ -32,6 +35,22 @@ using Float32MultiArray = std_msgs::msg::Float32MultiArray;
 
 class HtbSystem : public hardware_interface::SystemInterface
 {
+
+struct Config
+{
+  std::string left_wheel_name = "";
+  std::string right_wheel_name = "";
+  float loop_rate = 0.0;
+  std::string device = "";
+  int baud_rate = 0;
+  int timeout_ms = 0;
+  int enc_counts_per_rev = 0;
+  int pid_p = 0;
+  int pid_d = 0;
+  int pid_i = 0;
+  int pid_o = 0;
+};
+
 public:
   RCLCPP_SHARED_PTR_DEFINITIONS(HtbSystem)
 
@@ -70,23 +89,49 @@ public:
 
 protected:
   void cleanup_node();
+  void protocol_recv (char);
+  void on_encoder_update (int16_t right, int16_t left);
 
-  std::map<std::string, double> vel_commands_;
-  std::map<std::string, double> pos_state_;
-  std::map<std::string, double> vel_state_;
+  Config cfg_;
+  Wheel wheel_l_;
+  Wheel wheel_r_;
 
-  bool subscriber_is_active_ = false;
+  // Hoverboard driver
+
+  double wheel_radius_;
+  double max_velocity_ = 0.0;
+  int direction_correction_ = 1;
+  int inverted_ = 1;
+  std::string port_;
+
+  rclcpp::Time last_read_;
+  // Last known encoder values
+  int16_t last_wheelcountR_;
+  int16_t last_wheelcountL_;
+  // Count of full encoder wraps
+  int multR_;
+  int multL_;
+  // Thresholds for calculating the wrap
+  int low_wrap_;
+  int high_wrap_;
+
+  // Hoverboard protocol
+  int port_fd_;
+  int msg_len_ = 0;
+  char prev_byte_ = 0;
+  uint16_t start_frame_ = 0;
+  char* p_;
+  SerialFeedback msg_, prev_msg_;
+
+  // PID pids[2];
 
   std::shared_ptr<rclcpp::Node> node_;
-
-  void motor_state_cb(const std::shared_ptr<JointState> msg);
   rclcpp::executors::MultiThreadedExecutor executor_;
   std::unique_ptr<std::thread> executor_thread_;
 
   std::vector<std::string> velocity_command_joint_order_;
 
-  uint connection_check_period_ms_;
-  uint connection_timeout_ms_;
+
 };
 
 }  // namespace htb_hardware_interfaces

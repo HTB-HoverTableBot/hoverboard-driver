@@ -3,8 +3,13 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <unistd.h>
+#include <fcntl.h>
+#include <termios.h>
 
 #include "rclcpp/logging.hpp"
+#include "std_msgs/msg/float32.hpp"
+#include "std_msgs/msg/float64.hpp"
 
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
 
@@ -22,6 +27,39 @@ CallbackReturn HtbSystem::on_init(const hardware_interface::HardwareInfo& hardwa
   {
     return CallbackReturn::ERROR;
   }
+
+  // Get joint names from list of joints
+  cfg_.left_wheel_name = info_.hardware_parameters["left_wheel_name"];
+  cfg_.right_wheel_name = info_.hardware_parameters["right_wheel_name"];
+
+  cfg_.loop_rate = std::stof(info_.hardware_parameters["loop_rate"]);
+  cfg_.device = info_.hardware_parameters["device"];
+  cfg_.baud_rate = std::stoi(info_.hardware_parameters["baud_rate"]);
+  cfg_.timeout_ms = std::stoi(info_.hardware_parameters["timeout_ms"]);
+  cfg_.enc_counts_per_rev = std::stoi(info_.hardware_parameters["enc_counts_per_rev"]);
+
+  if (info_.hardware_parameters.count("pid_p") > 0)
+  {
+    cfg_.pid_p = std::stoi(info_.hardware_parameters["pid_p"]);
+    cfg_.pid_d = std::stoi(info_.hardware_parameters["pid_d"]);
+    cfg_.pid_i = std::stoi(info_.hardware_parameters["pid_i"]);
+    cfg_.pid_o = std::stoi(info_.hardware_parameters["pid_o"]);
+  }
+  else
+  {
+    RCLCPP_INFO(rclcpp::get_logger("DiffDriveArduinoHardware"), "PID values not supplied, using defaults.");
+  }
+
+
+  wheel_l_.setup(cfg_.left_wheel_name, cfg_.enc_counts_per_rev);
+  wheel_r_.setup(cfg_.right_wheel_name, cfg_.enc_counts_per_rev);
+
+
+  if ((port_fd_ = open(port_.c_str(), O_RDWR | O_NOCTTY | O_NDELAY)) < 0) {
+    RCLCPP_FATAL(rclcpp::get_logger("HtbSystem"), "Cannot open serial port to hoverboard");
+    exit(-1);
+  }
+
 
   for (const hardware_interface::ComponentInfo& joint : info_.joints)
   {
@@ -74,6 +112,23 @@ CallbackReturn HtbSystem::on_configure(const rclcpp_lifecycle::State&)
 {
   RCLCPP_INFO(rclcpp::get_logger("HtbSystem"), "Configuring");
   // return CallbackReturn::SUCCESS;
+
+
+  low_wrap_ = ENCODER_LOW_WRAP_FACTOR*(ENCODER_MAX - ENCODER_MIN) + ENCODER_MIN;
+  high_wrap_ = ENCODER_HIGH_WRAP_FACTOR*(ENCODER_MAX - ENCODER_MIN) + ENCODER_MIN;
+  last_wheelcountR_ = last_wheelcountL_ = 0;
+  multR_ = multL_ = 0;
+
+  struct termios options;
+  tcgetattr(port_fd_, &options);
+  options.c_cflag = B115200 | CS8 | CLOCAL | CREAD;		//<Set baud rate
+  options.c_iflag = IGNPAR;
+  options.c_oflag = 0;
+  options.c_lflag = 0;
+  tcflush(port_fd_, TCIFLUSH);
+  tcsetattr(port_fd_, TCSANOW, &options);
+
+
   return hardware_interface::CallbackReturn::SUCCESS;
 }
 
@@ -88,12 +143,6 @@ CallbackReturn HtbSystem::on_activate(const rclcpp_lifecycle::State&)
   RCLCPP_INFO(rclcpp::get_logger("HtbSystem"), "Activating");
 
   // TODO: Initialize pose and status
-  for (const auto& x : pos_state_)
-  {
-    pos_state_[x.first] = 0.0;
-    vel_state_[x.first] = 0.0;
-    vel_commands_[x.first] = 0.0;
-  }
 
   RCLCPP_INFO(node_->get_logger(), "Activation successful");
   return CallbackReturn::SUCCESS;
@@ -123,13 +172,17 @@ CallbackReturn HtbSystem::on_error(const rclcpp_lifecycle::State&)
 std::vector<StateInterface> HtbSystem::export_state_interfaces()
 {
   std::vector<StateInterface> state_interfaces;
-  for (auto i = 0u; i < info_.joints.size(); i++)
-  {
-    state_interfaces.emplace_back(
-        StateInterface(info_.joints[i].name, hardware_interface::HW_IF_POSITION, &pos_state_[info_.joints[i].name]));
-    state_interfaces.emplace_back(
-        StateInterface(info_.joints[i].name, hardware_interface::HW_IF_VELOCITY, &vel_state_[info_.joints[i].name]));
-  }
+
+
+  state_interfaces.emplace_back(hardware_interface::StateInterface(
+    wheel_l_.name, hardware_interface::HW_IF_POSITION, &wheel_l_.pos));
+  state_interfaces.emplace_back(hardware_interface::StateInterface(
+    wheel_l_.name, hardware_interface::HW_IF_VELOCITY, &wheel_l_.vel));
+
+  state_interfaces.emplace_back(hardware_interface::StateInterface(
+    wheel_r_.name, hardware_interface::HW_IF_POSITION, &wheel_r_.pos));
+  state_interfaces.emplace_back(hardware_interface::StateInterface(
+    wheel_r_.name, hardware_interface::HW_IF_VELOCITY, &wheel_r_.vel));
 
   return state_interfaces;
 }
@@ -137,11 +190,13 @@ std::vector<StateInterface> HtbSystem::export_state_interfaces()
 std::vector<CommandInterface> HtbSystem::export_command_interfaces()
 {
   std::vector<CommandInterface> command_interfaces;
-  for (auto i = 0u; i < info_.joints.size(); i++)
-  {
-    command_interfaces.emplace_back(hardware_interface::CommandInterface(
-        info_.joints[i].name, hardware_interface::HW_IF_VELOCITY, &vel_commands_[info_.joints[i].name]));
-  }
+
+  command_interfaces.emplace_back(hardware_interface::CommandInterface(
+    wheel_l_.name, hardware_interface::HW_IF_VELOCITY, &wheel_l_.cmd));
+
+  command_interfaces.emplace_back(hardware_interface::CommandInterface(
+    wheel_r_.name, hardware_interface::HW_IF_VELOCITY, &wheel_r_.cmd));
+
 
   return command_interfaces;
 }
@@ -149,22 +204,188 @@ std::vector<CommandInterface> HtbSystem::export_command_interfaces()
 void HtbSystem::cleanup_node()
 {
   // TODO: Clean and reset
+  if (port_fd_ != -1) 
+    close(port_fd_);
 }
 
-return_type HtbSystem::read(const rclcpp::Time&, const rclcpp::Duration&)
+return_type HtbSystem::read(const rclcpp::Time& time, const rclcpp::Duration&)
 {
-  // TODO: update read method
+  RCLCPP_INFO(rclcpp::get_logger("HtbSystem"), "Reading motors state");
 
-  RCLCPP_DEBUG(rclcpp::get_logger("HtbSystem"), "Reading motors state");
+  if (port_fd_ != -1) {
+    unsigned char c;
+    int i = 0, r = 0;
+
+    while ((r = ::read(port_fd_, &c, 1)) > 0 && i++ < 1024)
+      protocol_recv(c);
+
+    if (i > 0)
+      last_read_ = time;
+
+    if (r < 0 && errno != EAGAIN)
+      RCLCPP_ERROR(rclcpp::get_logger("HtbSystem"), "Reading from serial %s failed: %d", port_.c_str(), r);
+  }
+
+  if ((time - last_read_).seconds() > 1) {
+    RCLCPP_FATAL(rclcpp::get_logger("HtbSystem"), "Timeout reading from serial %s failed", port_.c_str());
+  } 
 
   return return_type::OK;
 }
 
 return_type HtbSystem::write(const rclcpp::Time&, const rclcpp::Duration&)
 {
-  // TODO: update read method
+  RCLCPP_INFO(rclcpp::get_logger("HtbSystem"), "Writing to motors");
+
+   if (port_fd_ == -1) {
+    RCLCPP_ERROR(rclcpp::get_logger("HtbSystem"), "Attempt to write on closed serial");
+    exit(-1);
+  }
+  // Inform interested parties about the commands we've got
+  // cmd_pub[0].publish(joints[0].cmd);
+  // cmd_pub[1].publish(joints[1].cmd);
+
+  // double pid_outputs[2];
+  // pid_outputs[0] = pids[0](joints[0].vel.data, joints[0].cmd.data, period);
+  // pid_outputs[1] = pids[1](joints[1].vel.data, joints[1].cmd.data, period);
+
+  // Convert PID outputs in RAD/S to RPM
+  // double set_speed[2] = {
+  //   pid_outputs[0] / 0.10472,
+  //   pid_outputs[1] / 0.10472
+  // };
+
+  // Calculate steering from difference of left and right
+  double speed = 0.0; // (set_speed[0] + set_speed[1])/2.0;
+  double steer = 0.0; // (set_speed[0] - speed)*2.0;
+
+  // if (inverted == 1){
+  //   speed = -speed;
+  //   steer = -steer;
+  // }
+
+  SerialCommand command;
+  command.start = (uint16_t)START_FRAME;
+  command.steer = (int16_t)steer;
+  command.speed = (int16_t)speed;
+  command.checksum = (uint16_t)(command.start ^ command.steer ^ command.speed);
+
+  int rc = ::write(port_fd_, (const void*)&command, sizeof(command));
+  if (rc < 0) {
+    RCLCPP_ERROR(rclcpp::get_logger("HtbSystem"), "Error writing to hoverboard serial port");
+  }
 
   return return_type::OK;
+}
+
+void HtbSystem::protocol_recv (char byte) {
+  start_frame_ = ((uint16_t)(byte) << 8) | (uint8_t)prev_byte_;
+
+  // Read the start frame
+  if (start_frame_ == START_FRAME) {
+    p_ = (char*)&msg_;
+    *p_++ = prev_byte_;
+    *p_++ = byte;
+    msg_len_ = 2;
+  } else if (msg_len_ >= 2 && msg_len_ < (int) sizeof(SerialFeedback)) {
+    // Otherwise just read the message content until the end
+    *p_++ = byte;
+    msg_len_++;
+  }
+
+  if (msg_len_ == sizeof(SerialFeedback)) {
+    uint16_t checksum = (uint16_t)(
+        msg_.start ^
+        msg_.cmd1 ^
+        msg_.cmd2 ^
+        msg_.speedR_meas ^
+        msg_.speedL_meas ^
+        msg_.wheelR_cnt ^
+        msg_.wheelL_cnt ^
+        msg_.batVoltage ^
+        msg_.boardTemp ^
+        msg_.cmdLed);
+
+    if (msg_.start == START_FRAME && msg_.checksum == checksum) {
+      std_msgs::msg::Float64 f;
+
+      f.data = (double)msg_.batVoltage/100.0;
+      // voltage_pub_.publish(f);
+
+      f.data = (double)msg_.boardTemp/10.0;
+      // temp_pub.publish(f);
+
+      // Convert RPM to RAD/S
+      // joints[0].vel.data = direction_correction * (abs(msg.speedL_meas) * 0.10472);
+      // joints[1].vel.data = direction_correction * (abs(msg.speedR_meas) * 0.10472);
+
+      // Process encoder values and update odometry
+      on_encoder_update (msg_.wheelR_cnt, msg_.wheelL_cnt);
+    } else {
+      RCLCPP_WARN(rclcpp::get_logger("HtbSystem"), "Hoverboard checksum mismatch: %d vs %d", msg_.checksum, checksum);
+    }
+    msg_len_ = 0;
+  }
+  prev_byte_ = byte;
+}
+
+void HtbSystem::on_encoder_update (int16_t right, int16_t left) {
+  double posL = 0.0, posR = 0.0;
+
+  // Calculate wheel position in ticks, factoring in encoder wraps
+  if (right < low_wrap_ && last_wheelcountR_ > high_wrap_)
+    multR_++;
+  else if (right > high_wrap_ && last_wheelcountR_ < low_wrap_)
+    multR_--;
+  posR = right + multR_*(ENCODER_MAX-ENCODER_MIN);
+  last_wheelcountR_ = right;
+
+  if (left < low_wrap_ && last_wheelcountL_ > high_wrap_)
+    multL_++;
+  else if (left > high_wrap_ && last_wheelcountL_ < low_wrap_)
+    multL_--;
+  posL = left + multL_*(ENCODER_MAX-ENCODER_MIN);
+  last_wheelcountL_ = left;
+
+  // When the board shuts down and restarts, wheel ticks are reset to zero so the robot can be suddently lost
+  // This section accumulates ticks even if board shuts down and is restarted   
+  static double lastPosL = 0.0, lastPosR = 0.0;
+  static double lastPubPosL = 0.0, lastPubPosR = 0.0;
+  static bool nodeStartFlag = true;
+
+  //IF there has been a pause in receiving data AND the new number of ticks is close to zero, indicates a board restard
+  //(the board seems to often report 1-3 ticks on startup instead of zero)
+  //reset the last read ticks to the startup values
+  rclcpp::Clock clock;
+  if((clock.now() - last_read_).seconds() > 0.2
+      && abs(posL) < 5 && abs(posR) < 5){
+    lastPosL = posL;
+    lastPosR = posR;
+  }
+  double posLDiff = 0;
+  double posRDiff = 0;
+
+  //if node is just starting keep odom at zeros
+  if(nodeStartFlag){
+    nodeStartFlag = false;
+  }else{
+    posLDiff = posL - lastPosL;
+    posRDiff = posR - lastPosR;
+  }
+
+  lastPubPosL += posLDiff;
+  lastPubPosR += posRDiff;
+  lastPosL = posL;
+  lastPosR = posR;
+
+  // Convert position in accumulated ticks to position in radians
+  // joints[0].pos.data = 2.0*M_PI * lastPubPosL/(double)TICKS_PER_ROTATION;
+  // joints[1].pos.data = 2.0*M_PI * lastPubPosR/(double)TICKS_PER_ROTATION;
+  wheel_l_.pos = 2.0*M_PI * lastPubPosL/(double)TICKS_PER_ROTATION;
+  wheel_r_.pos = 2.0*M_PI * lastPubPosR/(double)TICKS_PER_ROTATION;
+
+  // pos_pub[0].publish(joints[0].pos);
+  // pos_pub[1].publish(joints[1].pos);
 }
 
 }  // namespace htb_hardware_interfaces
