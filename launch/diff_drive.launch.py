@@ -30,8 +30,8 @@ def generate_launch_description():
             PathJoinSubstitution(
                 [
                     FindPackageShare("htb_description"),
-                    "models/htb",
-                    "htb.xacro",
+                    "urdf",
+                    "htb.urdf.xacro",
                 ]
             ),
         ]
@@ -50,11 +50,10 @@ def generate_launch_description():
         package="controller_manager",
         executable="ros2_control_node",
         parameters=[robot_description, robot_controllers],
+        output="both",
         remappings=[
-            ("~/motors_cmd", "/_motors_cmd"),
-            ("~/motors_response", "/_motors_response"),
             ("/htb_base_controller/cmd_vel_unstamped", "/cmd_vel"),
-        ],
+        ]
     )
 
     robot_state_pub_node = Node(

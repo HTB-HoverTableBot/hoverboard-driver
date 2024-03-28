@@ -18,6 +18,8 @@
 #include "std_msgs/msg/float32_multi_array.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
 
+#include "htb_hardware_interfaces/wheel.hpp"
+
 namespace htb_hardware_interfaces
 {
 using return_type = hardware_interface::return_type;
@@ -68,14 +70,6 @@ public:
 
 protected:
   void cleanup_node();
-
-  realtime_tools::RealtimeBox<std::shared_ptr<JointState>> received_motor_state_msg_ptr_{ nullptr };
-
-  std::shared_ptr<rclcpp::Publisher<Float32MultiArray>> motor_command_publisher_ = nullptr;
-
-  std::shared_ptr<realtime_tools::RealtimePublisher<Float32MultiArray>> realtime_motor_command_publisher_ = nullptr;
-
-  rclcpp::Subscription<JointState>::SharedPtr motor_state_subscriber_ = nullptr;
 
   std::map<std::string, double> vel_commands_;
   std::map<std::string, double> pos_state_;
