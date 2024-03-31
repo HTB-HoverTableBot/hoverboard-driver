@@ -20,7 +20,6 @@
 
 #include "htb_hardware_interfaces/wheel.hpp"
 #include "hoverboard_driver/protocol.hpp"
-#include "hoverboard_driver/pid.hpp"
 #include "hoverboard_driver/config.hpp"
 
 namespace htb_hardware_interfaces
@@ -45,6 +44,7 @@ struct Config
   int baud_rate = 0;
   int timeout_ms = 0;
   int enc_counts_per_rev = 0;
+  int inverted = 0;
   int pid_p = 0;
   int pid_d = 0;
   int pid_i = 0;

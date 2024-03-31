@@ -51,9 +51,9 @@ def generate_launch_description():
         executable="ros2_control_node",
         parameters=[robot_description, robot_controllers],
         output="both",
-        # remappings=[
-        #     ("/htb_base_controller/cmd_vel_unstamped", "/cmd_vel"),
-        # ]
+        remappings=[
+            ("/htb_base_controller/cmd_vel_unstamped", "/cmd_vel"),
+        ]
     )
 
     robot_state_pub_node = Node(

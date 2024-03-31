@@ -38,6 +38,7 @@ CallbackReturn HtbSystem::on_init(const hardware_interface::HardwareInfo& hardwa
   cfg_.baud_rate = std::stoi(info_.hardware_parameters["baud_rate"]);
   cfg_.timeout_ms = std::stoi(info_.hardware_parameters["timeout_ms"]);
   cfg_.enc_counts_per_rev = std::stoi(info_.hardware_parameters["enc_counts_per_rev"]);
+  cfg_.inverted = std::stoi(info_.hardware_parameters["inverted"]);
 
   // Check if device is a serial port
   RCLCPP_INFO(rclcpp::get_logger("HtbSystem"), "Configuring serial port: %s", cfg_.device.c_str());
@@ -201,10 +202,10 @@ std::vector<CommandInterface> HtbSystem::export_command_interfaces()
   std::vector<CommandInterface> command_interfaces;
 
   command_interfaces.emplace_back(hardware_interface::CommandInterface(
-    wheel_l_.name, hardware_interface::HW_IF_VELOCITY, &wheel_l_.cmd));
+    wheel_l_.name, hardware_interface::HW_IF_VELOCITY, &wheel_l_.cmd_rad_s));
 
   command_interfaces.emplace_back(hardware_interface::CommandInterface(
-    wheel_r_.name, hardware_interface::HW_IF_VELOCITY, &wheel_r_.cmd));
+    wheel_r_.name, hardware_interface::HW_IF_VELOCITY, &wheel_r_.cmd_rad_s));
 
 
   return command_interfaces;
@@ -252,29 +253,22 @@ return_type HtbSystem::write(const rclcpp::Time&, const rclcpp::Duration&)
     RCLCPP_ERROR(rclcpp::get_logger("HtbSystem"), "Attempt to write on closed serial");
     exit(-1);
   }
-  // Inform interested parties about the commands we've got
-  // cmd_pub[0].publish(joints[0].cmd);
-  // cmd_pub[1].publish(joints[1].cmd);
+  // print wheel_l_.cmd and wheel_r_.cmd
+  RCLCPP_DEBUG(rclcpp::get_logger("HtbSystem"), "Wheel L: %f, Wheel R: %f", wheel_l_.cmd_rad_s, wheel_r_.cmd_rad_s);
 
-  // double pid_outputs[2];
-  // pid_outputs[0] = pids[0](joints[0].vel.data, joints[0].cmd.data, period);
-  // pid_outputs[1] = pids[1](joints[1].vel.data, joints[1].cmd.data, period);
-
-  // Convert PID outputs in RAD/S to RPM
-  // double set_speed[2] = {
-  //   pid_outputs[0] / 0.10472,
-  //   pid_outputs[1] / 0.10472
-  // };
+  // Calculate wheel velocity from command RAD/S to RPM
+  wheel_l_.cmd_rpm = wheel_l_.cmd_rad_s * 60.0 / (2.0*M_PI);
+  wheel_r_.cmd_rpm = wheel_r_.cmd_rad_s * 60.0 / (2.0*M_PI);
 
   // Calculate steering from difference of left and right
   // TODO: This is a very simple implementation, we should use a PID controller
-  double speed = 10.1; // (set_speed[0] + set_speed[1])/2.0;
-  double steer = 0.1; // (set_speed[0] - speed)*2.0;
+  double speed = (wheel_l_.cmd_rpm + wheel_r_.cmd_rpm)/2.0;
+  double steer = (wheel_l_.cmd_rpm - wheel_r_.cmd_rpm)*2.0;
 
-  // if (inverted == 1){
-  //   speed = -speed;
-  //   steer = -steer;
-  // }
+  if (cfg_.inverted == 1){
+    speed = -speed;
+    // steer = -steer;
+  }
 
   SerialCommand command;
   command.start = (uint16_t)START_FRAME;
@@ -394,8 +388,8 @@ void HtbSystem::on_encoder_update (int16_t right, int16_t left) {
   // Convert position in accumulated ticks to position in radians
   // joints[0].pos.data = 2.0*M_PI * lastPubPosL/(double)TICKS_PER_ROTATION;
   // joints[1].pos.data = 2.0*M_PI * lastPubPosR/(double)TICKS_PER_ROTATION;
-  wheel_l_.pos = 2.0*M_PI * lastPubPosL/(double)TICKS_PER_ROTATION;
-  wheel_r_.pos = 2.0*M_PI * lastPubPosR/(double)TICKS_PER_ROTATION;
+  wheel_l_.pos = 2.0*M_PI * lastPubPosL/(double)cfg_.enc_counts_per_rev;
+  wheel_r_.pos = 2.0*M_PI * lastPubPosR/(double)cfg_.enc_counts_per_rev;
   RCLCPP_DEBUG(rclcpp::get_logger("HtbSystem"), "Wheel position: %f, %f", wheel_l_.pos, wheel_r_.pos);
 
   // pos_pub[0].publish(joints[0].pos);

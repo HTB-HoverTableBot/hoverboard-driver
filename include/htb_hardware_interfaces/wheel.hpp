@@ -6,7 +6,8 @@ class Wheel
 public:
     std::string name = "";
     int enc = 0;
-    double cmd = 0;
+    double cmd_rad_s = 0;
+    double cmd_rpm = 0;
     double pos = 0;
     double vel = 0;
     double rads_per_count = 0;
