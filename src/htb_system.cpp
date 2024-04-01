@@ -331,7 +331,6 @@ void HtbSystem::protocol_recv (char byte) {
         wheel_l_.vel = direction_correction_ * (msg_.speedL_meas * 0.10472);
         wheel_r_.vel = direction_correction_ * (-msg_.speedR_meas * 0.10472);
       }
-      RCLCPP_INFO(rclcpp::get_logger("HtbSystem"), "Wheel velocity: %f, %f", wheel_l_.vel, wheel_r_.vel);
 
       // Process encoder values and update odometry
       on_encoder_update (msg_.wheelR_cnt, msg_.wheelL_cnt);
@@ -370,7 +369,6 @@ void HtbSystem::on_encoder_update (int16_t right, int16_t left) {
   //IF there has been a pause in receiving data AND the new number of ticks is close to zero, indicates a board restard
   //(the board seems to often report 1-3 ticks on startup instead of zero)
   //reset the last read ticks to the startup values
-  RCLCPP_INFO(rclcpp::get_logger("HtbSystem"), "posL: %f, posR: %f", posL, posR);
   if((node_->get_clock()->now() - last_read_).seconds() > 0.2
       && abs(posL) < 5 && abs(posR) < 5){
     lastPosL = posL;
@@ -386,7 +384,6 @@ void HtbSystem::on_encoder_update (int16_t right, int16_t left) {
     posLDiff = posL - lastPosL;
     posRDiff = posR - lastPosR;
   }
-  RCLCPP_INFO(rclcpp::get_logger("HtbSystem"), "posLDiff: %f, posRDiff: %f", posLDiff, posRDiff);
 
   lastPubPosL += posLDiff;
   lastPubPosR += posRDiff;
@@ -398,7 +395,6 @@ void HtbSystem::on_encoder_update (int16_t right, int16_t left) {
   // joints[1].pos.data = 2.0*M_PI * lastPubPosR/(double)TICKS_PER_ROTATION;
   wheel_l_.pos = 2.0*M_PI * lastPubPosL/(double)cfg_.enc_counts_per_rev;
   wheel_r_.pos = 2.0*M_PI * lastPubPosR/(double)cfg_.enc_counts_per_rev;
-  RCLCPP_INFO(rclcpp::get_logger("HtbSystem"), "Wheel position: %f, %f", wheel_l_.pos, wheel_r_.pos);
 
   // pos_pub[0].publish(joints[0].pos);
   // pos_pub[1].publish(joints[1].pos);
