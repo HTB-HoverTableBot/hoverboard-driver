@@ -50,6 +50,7 @@ def generate_launch_description():
         package="controller_manager",
         executable="ros2_control_node",
         parameters=[robot_description, robot_controllers],
+        #parameters=[robot_controllers],
         output="both",
         remappings=[
             ("/htb_base_controller/cmd_vel_unstamped", "/cmd_vel"),
@@ -95,7 +96,7 @@ def generate_launch_description():
 
     actions = [
         control_node,
-        robot_state_pub_node,
+        #robot_state_pub_node,
         joint_state_broadcaster_spawner,
         delay_robot_controller_spawner_after_joint_state_broadcaster_spawner,
     ]
