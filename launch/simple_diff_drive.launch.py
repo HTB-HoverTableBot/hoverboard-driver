@@ -18,6 +18,7 @@ from launch.event_handlers import OnProcessExit
 from launch.substitutions import Command, FindExecutable, PathJoinSubstitution
 from launch.substitutions import LaunchConfiguration
 from launch.actions import DeclareLaunchArgument
+from nav2_common.launch import ReplaceString
 
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
@@ -38,13 +39,20 @@ def generate_launch_description():
             ),
         ]
     )
-    robot_description = {"robot_description": robot_description_content}
+
+
     namespace = LaunchConfiguration('namespace')
+    serial_port = LaunchConfiguration('serial_port')
 
     declare_namespace_cmd = DeclareLaunchArgument(
         'namespace',
         default_value='robot1',
         description='Whether to apply a namespace to the navigation stack')
+
+    declare_serial_port_cmd = DeclareLaunchArgument(
+        'serial_port',
+        default_value='/dev/ttyUSB1',
+        description='HTB serial port')
 
     robot_controllers = PathJoinSubstitution(
         [
@@ -53,6 +61,9 @@ def generate_launch_description():
             "diff_drive_controller.yaml",
         ]
     )
+
+    robot_description = {"robot_description": robot_description_content}
+
 
     control_node = Node(
         package="controller_manager",
@@ -109,6 +120,7 @@ def generate_launch_description():
         control_node,
         #robot_state_pub_node,
         declare_namespace_cmd,
+        declare_serial_port_cmd,
         joint_state_broadcaster_spawner,
         delay_robot_controller_spawner_after_joint_state_broadcaster_spawner,
     ]
